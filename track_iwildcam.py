@@ -28,6 +28,10 @@ from absl import flags
 import numpy as np
 import pandas as pd
 
+from deep_sort import nn_matching
+from deep_sort.detection import Detection
+from deep_sort.tracker import Tracker
+
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
@@ -38,6 +42,15 @@ flags.DEFINE_string(
 flags.DEFINE_string(
     'features_json', default=None,
     help=('Path to json file containing the features for each bounding box'))
+
+flags.DEFINE_float(
+    'max_cosine_distance', default=0.2,
+    help=('Gating threshold for cosine distance metric (object appearance).'))
+
+flags.DEFINE_integer(
+    'nn_budget', default=None,
+    help=('Maximum size of the appearance descriptor gallery. If None, no'
+          ' budget is enforced.'))
 
 if 'random_seed' not in list(FLAGS):
   flags.DEFINE_integer(
@@ -61,14 +74,58 @@ def _load_seq_info():
 
   return test_set
 
+def create_detections(features, img_id):
+  features = features[features.img_id == img_id]
+
+  detection_list = []
+  for _, row in features.iterrows():
+    detection_list.append(Detection(
+      row['bbox_tlwh'],
+      row['conf'],
+      row['features']))
+
+  return detection_list
+
+def run_deepsort_on_seq(detections_list):
+  metric = nn_matching.NearestNeighborDistanceMetric(
+        "cosine", FLAGS.max_cosine_distance, FLAGS.nn_budget)
+  tracker = Tracker(metric)
+  confirmed_tracks = []
+  all_tracks = []
+
+  for frame_idx, detections in enumerate(detections_list):
+    tracker.predict()
+    tracker.update(detections)
+
+    for track in tracker.tracks:
+      if track.is_confirmed():
+        confirmed_tracks.append(track.track_id)
+
+      if track.time_since_update > 1:
+          continue
+      bbox = track.to_tlwh()
+      all_tracks.append([
+          frame_idx, track.track_id, bbox[0], bbox[1], bbox[2], bbox[3]])
+
+  confirmed_tracks = set(confirmed_tracks)
+  results = [track_bbox for track_bbox in all_tracks
+             if track_bbox[1] in confirmed_tracks]
+
+  return results
+
 def track_iwildcam(test_set, features):
-  for seq_id in test_set.seq_id.unique()[:2]:
-    print("seq: ", seq_id)
-    images_ids = list(test_set[test_set.seq_id == seq_id].id)
-    features_seq = features[features.img_id.isin(images_ids)]
-    print('num images: ', len(features_seq))
-    for img_id in features_seq.img_id.unique():
-      print('image: ', img_id)
+  for seq_id in test_set.seq_id.unique()[30:40]:
+    seq_info = test_set[test_set.seq_id == seq_id]
+    seq_info = seq_info.sort_values(by=['seq_frame_num'])
+
+    detections_list = []
+    max_dets = 0
+    for _, row in seq_info.iterrows():
+      detections = create_detections(features, row['id'])
+      detections_list.append(detections)
+      max_dets = max(max_dets, len(detections))
+
+    results = run_deepsort_on_seq(detections_list)
 
 def set_random_seeds():
   random.seed(FLAGS.random_seed)
