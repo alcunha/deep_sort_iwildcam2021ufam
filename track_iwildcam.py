@@ -52,6 +52,10 @@ flags.DEFINE_integer(
     help=('Maximum size of the appearance descriptor gallery. If None, no'
           ' budget is enforced.'))
 
+flags.DEFINE_string(
+    'tracks_file', default=None,
+    help=('Path to file where confirmed tracks info will be saved to.'))
+
 if 'random_seed' not in list(FLAGS):
   flags.DEFINE_integer(
       'random_seed', default=42,
@@ -59,6 +63,7 @@ if 'random_seed' not in list(FLAGS):
 
 flags.mark_flag_as_required('test_info_json')
 flags.mark_flag_as_required('features_json')
+flags.mark_flag_as_required('tracks_file')
 
 def _load_features():
   with open(FLAGS.features_json, 'r') as json_file:
@@ -86,14 +91,14 @@ def create_detections(features, img_id):
 
   return detection_list
 
-def run_deepsort_on_seq(detections_list):
+def run_deepsort_on_seq(detections_list, frames_ids):
   metric = nn_matching.NearestNeighborDistanceMetric(
         "cosine", FLAGS.max_cosine_distance, FLAGS.nn_budget)
   tracker = Tracker(metric)
   confirmed_tracks = []
   all_tracks = []
 
-  for frame_idx, detections in enumerate(detections_list):
+  for frame_id, detections in zip(frames_ids, detections_list):
     tracker.predict()
     tracker.update(detections)
 
@@ -105,7 +110,7 @@ def run_deepsort_on_seq(detections_list):
           continue
       bbox = track.to_tlwh()
       all_tracks.append([
-          frame_idx, track.track_id, bbox[0], bbox[1], bbox[2], bbox[3]])
+          frame_id, track.track_id, bbox[0], bbox[1], bbox[2], bbox[3]])
 
   confirmed_tracks = set(confirmed_tracks)
   results = [track_bbox for track_bbox in all_tracks
@@ -114,18 +119,31 @@ def run_deepsort_on_seq(detections_list):
   return results
 
 def track_iwildcam(test_set, features):
-  for seq_id in test_set.seq_id.unique()[30:40]:
+  tracks_list = []
+  
+  for seq_id in test_set.seq_id.unique():
     seq_info = test_set[test_set.seq_id == seq_id]
     seq_info = seq_info.sort_values(by=['seq_frame_num'])
 
     detections_list = []
-    max_dets = 0
+    frames_ids = []
     for _, row in seq_info.iterrows():
       detections = create_detections(features, row['id'])
       detections_list.append(detections)
-      max_dets = max(max_dets, len(detections))
+      frames_ids.append(row['id'])
 
-    results = run_deepsort_on_seq(detections_list)
+    results = run_deepsort_on_seq(detections_list, frames_ids)
+
+    for bbox in results:
+      bbox_info = {
+        'seq_id': seq_id,
+        'img_id': bbox[0],
+        'track_id': seq_id + str(bbox[1]),
+        'bbox_tlwh': bbox[2:]
+      }
+      tracks_list.append(bbox_info)
+
+  return tracks_list
 
 def set_random_seeds():
   random.seed(FLAGS.random_seed)
@@ -136,7 +154,12 @@ def main(_):
 
   test_set = _load_seq_info()
   features = _load_features()
-  track_iwildcam(test_set, features)
+  confirmed_tracks = track_iwildcam(test_set, features)
+
+  with open(FLAGS.tracks_file, 'w') as fp:
+    json.dump(confirmed_tracks, fp)
+
+  print("Confirmed tracks saved to %s" % FLAGS.tracks_file)
 
 if __name__ == '__main__':
   app.run(main)
