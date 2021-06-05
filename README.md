@@ -4,7 +4,21 @@ This repository contains code to run DeepSORT on [iWilcam 2021](https://www.kagg
 
 Please refer to the original [DeepSORT repository](https://github.com/nwojke/deep_sort) for more information about Deep SORT or see the [arXiv preprint](https://arxiv.org/abs/1703.07402).
 
-## Citing DeepSORT
+### DeepSORT to track animals
+
+To extract features using EfficientNet-B2, use the script `mot/generate_features.py` from our [main iWildcam repository](https://github.com/alcunha/iwildcam2021ufam). We kept DeepSORT code on a separate repository to avoid GPLv3 licensing conflicts.
+
+To track animals with DeepSORT use the script `track_iwildcam.py`:
+```bash
+python track_iwildcam.py --test_info_json=PATH_TO_BE_CONFIGURED/iwildcam2021_test_information.json
+    --features_json=PATH_TO_BE_CONFIGURED/efficientnet_b2_crop_25mai_features.json
+    --tracks_file=PATH_TO_BE_CONFIGURED/efficientnet_b2_crop_25mai_tracks.json
+```
+
+Finally, to classify tracks and generate a submission, go back to from our [main iWildcam repository](https://github.com/alcunha/iwildcam2021ufam) and use the script `classification/predict_track.py`.
+
+
+### Citing DeepSORT
 
 If you find this repo useful in your research, please consider citing the following papers:
 
